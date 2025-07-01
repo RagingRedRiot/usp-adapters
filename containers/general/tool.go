@@ -21,6 +21,7 @@ import (
 	"github.com/refractionPOINT/usp-adapters/box"
 	"github.com/refractionPOINT/usp-adapters/cato"
 	"github.com/refractionPOINT/usp-adapters/cylance"
+	"github.com/refractionPOINT/usp-adapters/darktrace"
 	"github.com/refractionPOINT/usp-adapters/defender"
 	"github.com/refractionPOINT/usp-adapters/duo"
 	"github.com/refractionPOINT/usp-adapters/entraid"
@@ -362,6 +363,11 @@ func runAdapter(method string, configs Configuration, showConfig bool) (USPClien
 		configs.Cylance.ClientOptions.Architecture = "usp_adapter"
 		configToShow = configs.Cylance
 		client, chRunning, err = usp_cylance.NewCylanceAdapter(configs.Cylance)
+	} else if method == "darktrace" {
+		configs.Darktrace.ClientOptions = applyLogging(configs.Darktrace.ClientOptions)
+		configs.Darktrace.ClientOptions.Architecture = "usp_adapter"
+		configToShow = configs.Darktrace
+		client, chRunning, err = usp_darktrace.NewDarkTraceAdapter(configs.Darktrace)
 	} else if method == "entraid" {
 		configs.EntraID.ClientOptions = applyLogging(configs.EntraID.ClientOptions)
 		configs.EntraID.ClientOptions.Architecture = "usp_adapter"
