@@ -42,6 +42,7 @@ import (
 	"github.com/refractionPOINT/usp-adapters/pandadoc"
 	"github.com/refractionPOINT/usp-adapters/proofpoint_tap"
 	"github.com/refractionPOINT/usp-adapters/pubsub"
+	"github.com/refractionPOINT/usp-adapters/recorded_future"
 	"github.com/refractionPOINT/usp-adapters/s3"
 	"github.com/refractionPOINT/usp-adapters/sentinelone"
 	"github.com/refractionPOINT/usp-adapters/simulator"
@@ -481,6 +482,11 @@ func runAdapter(ctx context.Context, method string, configs Configuration, showC
 		configs.SentinelOne.ClientOptions.Architecture = "usp_adapter"
 		configToShow = configs.SentinelOne
 		client, chRunning, err = usp_sentinelone.NewSentinelOneAdapter(ctx, configs.SentinelOne)
+	} else if method == "" {
+		configs.RecordedFuture.ClientOptions = applyLogging(configs.RecordedFuture.ClientOptions)
+		configs.RecordedFuture.ClientOptions.Architecture = "usp_adapter"
+		configToShow = configs.RecordedFuture
+		client, chRunning, err = usp_recordedfuture.NewRecordedFutureAdapter(ctx, configs.RecordedFuture)
 	} else if method == "trendmicro" {
 		configs.TrendMicro.ClientOptions = applyLogging(configs.TrendMicro.ClientOptions)
 		configs.TrendMicro.ClientOptions.Architecture = "usp_adapter"

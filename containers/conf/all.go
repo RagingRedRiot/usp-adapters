@@ -28,6 +28,7 @@ import (
 	"github.com/refractionPOINT/usp-adapters/pandadoc"
 	"github.com/refractionPOINT/usp-adapters/proofpoint_tap"
 	"github.com/refractionPOINT/usp-adapters/pubsub"
+	"github.com/refractionPOINT/usp-adapters/recorded_future"
 	"github.com/refractionPOINT/usp-adapters/s3"
 	"github.com/refractionPOINT/usp-adapters/sentinelone"
 	"github.com/refractionPOINT/usp-adapters/simulator"
@@ -87,4 +88,5 @@ type GeneralConfigs struct {
 	SentinelOne       usp_sentinelone.SentinelOneConfig               `json:"sentinel_one" yaml:"sentinel_one"`
 	TrendMicro        usp_trendmicro.TrendMicroConfig                 `json:"trendmicro" yaml:"trendmicro"`
 	Wiz               usp_wiz.WizConfig                               `json:"wiz" yaml:"wiz"`
+	RecordedFuture	  usp_recordedfuture.RecordedFutureConfig		  `json:"recorded_future" yaml:"recorded_future"`
 }
