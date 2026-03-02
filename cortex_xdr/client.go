@@ -186,6 +186,7 @@ func (a *CortexXDRAdapter) Close() error {
 type API struct {
 	Endpoint      string
 	Key           string
+	EventType     string // value set on DataMessage.EventType to distinguish event sources
 	Dedupe        map[string]int64
 	filterField   string // field name used in API filter/sort requests
 	responseField string // field name in the response data for timestamp
@@ -202,6 +203,7 @@ func (a *CortexXDRAdapter) fetchEvents() {
 		{
 			Endpoint:      incidentsEndpoint,
 			Key:           "incidents",
+			EventType:     "incident",
 			filterField:   "creation_time",
 			responseField: "creation_time",
 			idField:       "incident_id",
@@ -210,6 +212,7 @@ func (a *CortexXDRAdapter) fetchEvents() {
 		{
 			Endpoint:      alertsEndpoint,
 			Key:           "alerts",
+			EventType:     "alert",
 			filterField:   "server_creation_time",
 			responseField: "local_insert_ts",
 			idField:       "alert_id",
@@ -230,7 +233,7 @@ func (a *CortexXDRAdapter) fetchEvents() {
 			}
 
 			if len(items) > 0 {
-				if err := a.submitEvents(items); err != nil {
+				if err := a.submitEvents(items, api.EventType); err != nil {
 					// submitEvents already called Close(), stop processing
 					return
 				}
@@ -521,9 +524,10 @@ func (a *CortexXDRAdapter) doRequest(endpoint string, requestBody map[string]int
 	}
 }
 
-func (a *CortexXDRAdapter) submitEvents(items []utils.Dict) error {
+func (a *CortexXDRAdapter) submitEvents(items []utils.Dict, eventType string) error {
 	for _, item := range items {
 		msg := &protocol.DataMessage{
+			EventType:   eventType,
 			JsonPayload: item,
 			TimestampMs: uint64(time.Now().UTC().UnixNano() / int64(time.Millisecond)),
 		}
