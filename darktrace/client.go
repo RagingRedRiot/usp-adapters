@@ -136,6 +136,7 @@ func (a *DarktraceAdapter) Close() error {
 type API struct {
 	Endpoint     string
 	Key          string
+	EventType    string // value set on DataMessage.EventType to distinguish event sources
 	ResponseType DarktraceResponse
 	Dedupe       map[string]int64
 	timeField    string
@@ -153,6 +154,7 @@ func (a *DarktraceAdapter) fetchEvents() {
 		{
 			Endpoint:     aiAnalystAlerts,
 			Key:          "aiAnalyst",
+			EventType:    "ai_analyst",
 			ResponseType: &DarktraceEventsResponse{},
 			timeFormat:   "20060102T150405",
 			timeField:    "createdAt",
@@ -161,6 +163,7 @@ func (a *DarktraceAdapter) fetchEvents() {
 		{
 			Endpoint:     modelBreachAlerts,
 			Key:          "modelBreaches",
+			EventType:    "model_breach",
 			ResponseType: &DarktraceEventsResponse{},
 			timeFormat:   "20060102T150405",
 			timeField:    "creationTime",
@@ -180,8 +183,6 @@ func (a *DarktraceAdapter) fetchEvents() {
 			// Capture current time once for all APIs in this cycle
 			cycleTime := time.Now()
 
-			allItems := []utils.Dict{}
-
 			for _, api := range APIs {
 				pageURL := fmt.Sprintf("%s%s", a.conf.Url, api.Endpoint)
 				items, err := a.getEvents(pageURL, since[api.Key], cycleTime, api)
@@ -189,15 +190,11 @@ func (a *DarktraceAdapter) fetchEvents() {
 					a.conf.ClientOptions.OnError(fmt.Errorf("%s fetch failed: %w", api.Key, err))
 					continue
 				}
-				
-				if len(items) > 0 {
-					since[api.Key] = cycleTime.Add(-queryInterval * time.Second)
-					allItems = append(allItems, items...)
-				}
-			}
 
-			if len(allItems) > 0 {
-				a.submitEvents(allItems)
+				if len(items) > 0 {
+					a.submitEvents(items, api.EventType)
+					since[api.Key] = cycleTime.Add(-queryInterval * time.Second)
+				}
 			}
 		}
 	}
@@ -377,9 +374,10 @@ func (a *DarktraceAdapter) doRequest(url string, api API) (DarktraceResponse, er
 	}
 }
 
-func (a *DarktraceAdapter) submitEvents(items []utils.Dict) {
+func (a *DarktraceAdapter) submitEvents(items []utils.Dict, eventType string) {
 	for _, item := range items {
 		msg := &protocol.DataMessage{
+			EventType:   eventType,
 			JsonPayload: item,
 			TimestampMs: uint64(time.Now().UTC().UnixNano() / int64(time.Millisecond)),
 		}
