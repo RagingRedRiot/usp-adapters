@@ -539,8 +539,6 @@ func (a *CynetAdapter) processAlerts(resp *AlertsResponse) ([]utils.Dict, time.T
 			continue
 		}
 
-		entity["event-type"] = "cynet-alert"
-
 		// Track for deduplication using sync time
 		a.alertsDedupe[entityID] = time.Now().Unix()
 
@@ -569,6 +567,7 @@ func (a *CynetAdapter) cleanupDedupe() {
 func (a *CynetAdapter) submitEvents(events []utils.Dict) {
 	for _, item := range events {
 		msg := &protocol.DataMessage{
+			EventType:   "alert",
 			JsonPayload: item,
 			TimestampMs: uint64(time.Now().UnixNano() / int64(time.Millisecond)),
 		}
