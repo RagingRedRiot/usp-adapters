@@ -336,6 +336,7 @@ func (r AbnormalSecurityThreatsFlatSingleResponse) HasTimestamp() bool {
 type Api struct {
 	mu                 sync.Mutex
 	key                string
+	eventType          string // value set on DataMessage.EventType to distinguish event sources
 	endpoint           string
 	since              time.Time
 	idField            string
@@ -363,6 +364,7 @@ func (a *AbnormalSecurityAdapter) fetchEvents() {
 	apis := []Api{
 		{
 			key:                "abuseCampaigns",
+			eventType:          "abuse_campaign",
 			endpoint:           abuseCampaignsEndpoint,
 			since:              time.Now().Add(-1 * queryInterval * time.Second),
 			idField:            "campaignId",
@@ -375,6 +377,7 @@ func (a *AbnormalSecurityAdapter) fetchEvents() {
 		},
 		{
 			key:                "cases",
+			eventType:          "case",
 			endpoint:           casesEndpoint,
 			since:              time.Now().Add(-1 * queryInterval * time.Second),
 			idField:            "caseId",
@@ -387,6 +390,7 @@ func (a *AbnormalSecurityAdapter) fetchEvents() {
 		},
 		{
 			key:                "threats",
+			eventType:          "threat",
 			endpoint:           threatsEndpoint,
 			since:              time.Now().Add(-1 * queryInterval * time.Second),
 			idField:            "threatId",
@@ -398,6 +402,7 @@ func (a *AbnormalSecurityAdapter) fetchEvents() {
 		},
 		{
 			key:                "vendorCases",
+			eventType:          "vendor_case",
 			endpoint:           vendorCasesEndpoint,
 			since:              time.Now().Add(-1 * queryInterval * time.Second),
 			idField:            "vendorCaseId",
@@ -409,6 +414,7 @@ func (a *AbnormalSecurityAdapter) fetchEvents() {
 		},
 		{
 			key:           "abuseCampaignsNotAnalyzed",
+			eventType:     "abuse_campaign_not_analyzed",
 			endpoint:      abuseCampaignsNotAnalyzedEndpoint,
 			since:         time.Now().Add(-1 * queryInterval * time.Second),
 			idField:       "abx_message_id",
@@ -421,6 +427,7 @@ func (a *AbnormalSecurityAdapter) fetchEvents() {
 		},
 		{
 			key:           "auditLogs",
+			eventType:     "audit_log",
 			endpoint:      auditLogsEndpoint,
 			since:         time.Now().Add(-1 * queryInterval * time.Second),
 			idField:       "",
@@ -508,7 +515,7 @@ func (a *AbnormalSecurityAdapter) fetchEvents() {
 							}
 						}
 						if len(items) > 0 {
-							a.submitEvents(items)
+							a.submitEvents(items, retry.api.eventType)
 						}
 					}
 				}
@@ -532,9 +539,10 @@ func (a *AbnormalSecurityAdapter) shouldShutdown(apis []*Api) bool {
 
 // Returned results from fetch routines
 type routineResult struct {
-	key   string
-	items []utils.Dict
-	err   error
+	key       string
+	eventType string
+	items     []utils.Dict
+	err       error
 }
 
 func (a *AbnormalSecurityAdapter) RunFetchLoop(apis []*Api) {
@@ -575,8 +583,12 @@ func (a *AbnormalSecurityAdapter) RunFetchLoop(apis []*Api) {
 						return
 					}
 
+					type shipBatch struct {
+						items     []utils.Dict
+						eventType string
+					}
 					// Communication channel to send results to shipper routine
-					shipCh := make(chan []utils.Dict)
+					shipCh := make(chan shipBatch)
 					// Used to flag when the shipper routine is done.
 					shipDone := make(chan struct{})
 
@@ -593,12 +605,12 @@ func (a *AbnormalSecurityAdapter) RunFetchLoop(apis []*Api) {
 						}()
 
 						// shipper routine will run until shipCh closes
-						for events := range shipCh {
-							eventsCopy := events
+						for batch := range shipCh {
+							batchCopy := batch
 							// Consume a slot when spinning up a shipper routine
 							shipperSem <- struct{}{}
 							shipperWg.Add(1)
-							go func(events []utils.Dict) {
+							go func(b shipBatch) {
 								// Release a slot when done shipping
 								// Decrement shipperWg
 								defer func() {
@@ -606,10 +618,10 @@ func (a *AbnormalSecurityAdapter) RunFetchLoop(apis []*Api) {
 									shipperWg.Done()
 								}()
 								mu.Lock()
-								count += len(events)
+								count += len(b.items)
 								mu.Unlock()
-								a.submitEvents(events)
-							}(eventsCopy)
+								a.submitEvents(b.items, b.eventType)
+							}(batchCopy)
 
 						}
 						shipperWg.Wait()
@@ -656,7 +668,7 @@ func (a *AbnormalSecurityAdapter) RunFetchLoop(apis []*Api) {
 							a.conf.ClientOptions.OnError(fmt.Errorf("%s fetch failed: %w", res.key, res.err))
 							continue
 						}
-						shipCh <- res.items
+						shipCh <- shipBatch{items: res.items, eventType: res.eventType}
 					}
 
 					// resultCh has closed, meaning all events have been pooled for shipping
@@ -694,7 +706,7 @@ func (a *AbnormalSecurityAdapter) fetchApi(api *Api, resultCh chan<- routineResu
 	}
 
 	if err != nil {
-		resultCh <- routineResult{api.key, nil, err}
+		resultCh <- routineResult{api.key, api.eventType, nil, err}
 		return
 	}
 
@@ -706,7 +718,7 @@ func (a *AbnormalSecurityAdapter) fetchApi(api *Api, resultCh chan<- routineResu
 	}
 
 	if len(toReturn) > 0 {
-		resultCh <- routineResult{api.key, toReturn, nil}
+		resultCh <- routineResult{api.key, api.eventType, toReturn, nil}
 	}
 
 	// If non-event data was returned, use it to pull the events
@@ -730,7 +742,7 @@ func (a *AbnormalSecurityAdapter) fetchApi(api *Api, resultCh chan<- routineResu
 				// Because detailFn is sending a request for every specific event,
 				// and because dealing with errors involves waiting and retrying,
 				// we don't want to pool and hold onto all events until we have them all collected
-				resultCh <- routineResult{api.key, result.detailItems, result.err}
+				resultCh <- routineResult{api.key, api.eventType, result.detailItems, result.err}
 			}
 		}(&latestTimeStamp)
 
@@ -969,10 +981,6 @@ func (a *AbnormalSecurityAdapter) getEvents(ctx context.Context, pageUrl string,
 		page++
 	}
 
-	for i := range allItems {
-		allItems[i]["event-type"] = api.key
-	}
-
 	return allItems, lastDetectionTime, nil
 }
 
@@ -1104,9 +1112,10 @@ func (a *AbnormalSecurityAdapter) doWithRetry(ctx context.Context, url string, a
 	}
 }
 
-func (a *AbnormalSecurityAdapter) submitEvents(events []utils.Dict) {
+func (a *AbnormalSecurityAdapter) submitEvents(events []utils.Dict, eventType string) {
 	for _, item := range events {
 		msg := &protocol.DataMessage{
+			EventType:   eventType,
 			JsonPayload: item,
 			TimestampMs: uint64(time.Now().UnixNano() / int64(time.Millisecond)),
 		}
