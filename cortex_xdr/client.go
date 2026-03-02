@@ -31,7 +31,7 @@ const (
 	// ticker (or vice versa) will break the overlap guarantee.
 	queryInterval     = 60
 	incidentsEndpoint = "/public_api/v1/incidents/get_incidents/"
-	alertsEndpoint    = "/public_api/v1/alerts/get_alerts_multi_events/"
+	alertsEndpoint    = "/public_api/v2/alerts/get_alerts_multi_events/"
 	dedupeWindow      = 30 * time.Minute
 	maxRetries        = 3
 	initialRetryDelay = 5 * time.Second
@@ -210,8 +210,8 @@ func (a *CortexXDRAdapter) fetchEvents() {
 		{
 			Endpoint:      alertsEndpoint,
 			Key:           "alerts",
-			filterField:   "creation_time",
-			responseField: "detection_timestamp",
+			filterField:   "server_creation_time",
+			responseField: "local_insert_ts",
 			idField:       "alert_id",
 			Dedupe:        a.alertsDedupe,
 		},
