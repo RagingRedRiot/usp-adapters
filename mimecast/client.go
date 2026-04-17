@@ -293,6 +293,12 @@ type API struct {
 	endTimestampField   string
 }
 
+// EventItem pairs a log payload with the event type LC should route it as.
+type EventItem struct {
+	EventType string
+	Data      utils.Dict
+}
+
 func (api *API) IsActive() bool {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -403,7 +409,7 @@ func (a *MimecastAdapter) runOneCycle(apis []*API) error {
 	g.SetLimit(a.conf.MaxConcurrentWorkers)
 
 	// Buffered channel to collect results from workers
-	resultCh := make(chan []utils.Dict, len(apis))
+	resultCh := make(chan []EventItem, len(apis))
 
 	// Launch fetch workers
 	for _, api := range apis {
@@ -442,8 +448,8 @@ func (a *MimecastAdapter) runOneCycle(apis []*API) error {
 	return g.Wait()
 }
 
-func (a *MimecastAdapter) makeOneRequest(api *API, cycleTime time.Time) ([]utils.Dict, error) {
-	var allItems []utils.Dict
+func (a *MimecastAdapter) makeOneRequest(api *API, cycleTime time.Time) ([]EventItem, error) {
+	var allItems []EventItem
 	var start string
 	var retryCount int
 	var retryableErrorCount int
@@ -728,7 +734,7 @@ func (a *MimecastAdapter) makeOneRequest(api *API, cycleTime time.Time) ([]utils
 
 		// Collect items.
 		items := response.Data
-		var newItems []utils.Dict
+		var newItems []EventItem
 
 		for _, item := range items {
 			// Check if this item has nested structure (logType -> array of logs)
@@ -762,18 +768,10 @@ func (a *MimecastAdapter) makeOneRequest(api *API, cycleTime time.Time) ([]utils
 							continue
 						}
 
-						// Create a new item with the log data plus the logType
-						newItem := utils.Dict{
-							"logType":   logType,
-							"eventType": api.key,
-						}
-
-						// Copy all fields from the log
-						for k, v := range logMap {
-							newItem[k] = v
-						}
-
-						newItems = append(newItems, newItem)
+						newItems = append(newItems, EventItem{
+							EventType: logType,
+							Data:      utils.Dict(logMap),
+						})
 					}
 				}
 			} else {
@@ -782,16 +780,10 @@ func (a *MimecastAdapter) makeOneRequest(api *API, cycleTime time.Time) ([]utils
 					continue
 				}
 
-				newItem := utils.Dict{
-					"logType":   api.key,
-					"eventType": api.key,
-				}
-
-				for k, v := range item {
-					newItem[k] = v
-				}
-
-				newItems = append(newItems, newItem)
+				newItems = append(newItems, EventItem{
+					EventType: api.key,
+					Data:      utils.Dict(item),
+				})
 			}
 		}
 
@@ -897,8 +889,8 @@ func (a *MimecastAdapter) generateLogHash(logMap map[string]interface{}) string 
 	return hex.EncodeToString(hash[:])
 }
 
-func (a *MimecastAdapter) submitEvents(events []utils.Dict) {
-	for _, item := range events {
+func (a *MimecastAdapter) submitEvents(events []EventItem) {
+	for _, event := range events {
 		// Check if we're shutting down
 		select {
 		case <-a.ctx.Done():
@@ -907,7 +899,8 @@ func (a *MimecastAdapter) submitEvents(events []utils.Dict) {
 		}
 
 		msg := &protocol.DataMessage{
-			JsonPayload: item,
+			EventType:   event.EventType,
+			JsonPayload: event.Data,
 			TimestampMs: uint64(time.Now().UnixNano() / int64(time.Millisecond)),
 		}
 		if err := a.uspClient.Ship(msg, 10*time.Second); err != nil {
