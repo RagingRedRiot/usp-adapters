@@ -291,6 +291,14 @@ type API struct {
 	timeField           string
 	startTimestampField string
 	endTimestampField   string
+	// nestedKey is the wrapper array key Mimecast uses for this endpoint
+	// (e.g., "attachmentLogs", "clickLogs"). Empty means the endpoint returns
+	// records flat in data[].
+	nestedKey string
+	// useCategory: when true and a flat record has a string "category" field,
+	// use it as EventType instead of key. Only valid for audit events, whose
+	// native category field identifies the log subtype.
+	useCategory bool
 }
 
 // EventItem pairs a log payload with the event type LC should route it as.
@@ -314,7 +322,7 @@ func (api *API) SetInactive() {
 func (a *MimecastAdapter) fetchEvents() {
 	APIs := []*API{
 		{
-			key:                 "auditEvents",
+			key:                 "audit",
 			endpoint:            "/api/audit/get-audit-events",
 			since:               time.Now().Add(-1 * a.conf.InitialLookback),
 			dedupe:              make(map[string]int64),
@@ -323,6 +331,7 @@ func (a *MimecastAdapter) fetchEvents() {
 			timeField:           "eventTime",
 			startTimestampField: "startDateTime",
 			endTimestampField:   "endDateTime",
+			useCategory:         true,
 		},
 		{
 			key:       "attachment",
@@ -332,6 +341,7 @@ func (a *MimecastAdapter) fetchEvents() {
 			active:    true,
 			idField:   "",
 			timeField: "date",
+			nestedKey: "attachmentLogs",
 		},
 		{
 			key:       "impersonation",
@@ -341,6 +351,7 @@ func (a *MimecastAdapter) fetchEvents() {
 			active:    true,
 			idField:   "id",
 			timeField: "eventTime",
+			nestedKey: "impersonationLogs",
 		},
 		{
 			key:       "url",
@@ -350,6 +361,7 @@ func (a *MimecastAdapter) fetchEvents() {
 			active:    true,
 			idField:   "",
 			timeField: "date",
+			nestedKey: "clickLogs",
 		},
 		{
 			key:       "dlp",
@@ -359,6 +371,7 @@ func (a *MimecastAdapter) fetchEvents() {
 			active:    true,
 			idField:   "",
 			timeField: "eventTime",
+			nestedKey: "dlpLogs",
 		},
 	}
 
@@ -737,54 +750,41 @@ func (a *MimecastAdapter) makeOneRequest(api *API, cycleTime time.Time) ([]Event
 		var newItems []EventItem
 
 		for _, item := range items {
-			// Check if this item has nested structure (logType -> array of logs)
-			// or if it's flat structure (item IS the log itself)
-			// Known nested log types that contain arrays of logs
-			knownLogTypes := []string{"attachmentLogs", "impersonationLogs", "urlLogs", "dlpLogs"}
-			hasNestedStructure := false
-			for _, logType := range knownLogTypes {
-				if _, exists := item[logType]; exists {
-					hasNestedStructure = true
-					break
-				}
-			}
-
-			if hasNestedStructure {
-				for logType, logsInterface := range item {
-					logs, ok := logsInterface.([]interface{})
-					if !ok {
-						// Skip non-array fields (like resultCount, metadata, etc.)
-						continue
-					}
-
-					for _, logInterface := range logs {
+			// If this endpoint wraps records under a known key (attachmentLogs,
+			// clickLogs, etc.) and the item has that wrapper, unpack each record.
+			if api.nestedKey != "" {
+				if arr, ok := item[api.nestedKey].([]interface{}); ok {
+					for _, logInterface := range arr {
 						logMap, ok := logInterface.(map[string]interface{})
 						if !ok {
 							continue
 						}
-
-						// Handle deduplication FIRST
 						if !a.processLogItem(api, logMap) {
 							continue
 						}
-
 						newItems = append(newItems, EventItem{
-							EventType: logType,
+							EventType: api.key,
 							Data:      utils.Dict(logMap),
 						})
 					}
-				}
-			} else {
-				// Handle deduplication FIRST
-				if !a.processLogItem(api, item) {
 					continue
 				}
-
-				newItems = append(newItems, EventItem{
-					EventType: api.key,
-					Data:      utils.Dict(item),
-				})
 			}
+
+			// Flat record.
+			if !a.processLogItem(api, item) {
+				continue
+			}
+			eventType := api.key
+			if api.useCategory {
+				if cat, ok := item["category"].(string); ok && cat != "" {
+					eventType = cat
+				}
+			}
+			newItems = append(newItems, EventItem{
+				EventType: eventType,
+				Data:      utils.Dict(item),
+			})
 		}
 
 		allItems = append(allItems, newItems...)
